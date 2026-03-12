@@ -1,0 +1,193 @@
+================================================================================
+  consultation-infra-k8s 아키텍처 다이어그램 (텍스트)
+================================================================================
+
+-----------------------------
+  단순 흐름도 (-, |, ->)
+-----------------------------
+
+  Internet
+      |
+      | HTTPS
+      v
+  +-----------+     Ingress (/, /admin*, /fastapi*)
+  | Ingress   | --> api Pod, admin Pod, fastapi Pod
+  | ALB       |
+  +-----------+
+      ^
+      | alb_sg -> eks_node_sg (8081, 8082, 8000)
+
+  api / admin / fastapi / worker Pod
+      |
+      | 3306, 6379, 9092, 9200
+      v
+  +-----------+     TCP
+  | Internal  | --> MySQL (primary/replica), Redis, Kafka, Elasticsearch
+  | NLB       |
+  +-----------+
+
+  Operator --SSH--> Bastion --SSH/DB--> Data EC2 (MySQL, Redis, Kafka, ES)
+
+  Private Subnet (EKS nodes, Data EC2) --NAT GW--> Internet (ECR, SSM, ...)
+
+
+-----------------------------
+  상세 박스 다이어그램
+-----------------------------
+
+                              [ Internet ]
+                                   |
+                                   | HTTPS (80/443)
+                                   v
++-------------------------------------------------------------------------------+
+|  VPC (e.g. 10.0.0.0/16)                                                       |
+|                                                                               |
+|  +---------------------------  Public Subnets  -----------------------------+ |
+|  |  AZ-a                    |                    AZ-b                       | |
+|  |                                                                          | |
+|  |  +-------------+    +------------------+    (optional)                  | |
+|  |  |   Bastion   |    | NAT Gateway      |                                 | |
+|  |  |   (EC2)     |    | (enable_nat_     |                                 | |
+|  |  | bastion_sg  |    |  gateway)        |                                 | |
+|  |  +------|------+    +--------+---------+                                  | |
+|  |         |                   |                                              | |
+|  |         | SSH               | outbound (ECR, SSM, API...)                  | |
+|  +---------|-------------------|--------------------------------------------+ |
+|            |                   |                                              |
+|  +---------|-------------------|--------  Private Subnets  -----------------+ |
+|  |         v                   v                                              | |
+|  |  +----------------------------------------------------------------------+  | |
+|  |  |  Internal NLB (db_nlb)                                               |  | |
+|  |  |  Listeners: 3306 MySQL | 6379 Redis | 9092 Kafka | 9200 Elasticsearch |  | |
+|  |  +--------+--------+--------+--------+                                    |  | |
+|  |           |        |        |        |                                    |  | |
+|  |           v        v        v        v                                    |  | |
+|  |  +--------+   +-----+   +------+   +----+   Data layer (db_sg)            |  | |
+|  |  | MySQL  |   |Redis|   |Kafka |   | ES |   EC2 + docker compose           |  | |
+|  |  |Primary |   |     |   |      |   |    |                                  |  | |
+|  |  |(Replica|   +-----+   +------+   +----+                                  |  | |
+|  |  | opt.)  |                                                                 |  | |
+|  |  +--------+                                                                 |  | |
+|  |                                                                              |  | |
+|  |  +----------------------------------------------------------------------+   |  | |
+|  |  |  EKS Cluster (private subnets)                                        |   |  | |
+|  |  |  - System Node Group (LB Controller, Karpenter, CoreDNS, ...)        |   |  | |
+|  |  |  - Karpenter-provisioned nodes (api/admin/fastapi/worker Pods)        |   |  | |
+|  |  |  eks_node_sg                                                          |   |  | |
+|  |  |                                                                       |   |  | |
+|  |  |  Namespace: consultation-prod                                        |   |  | |
+|  |  |  +----------+ +----------+ +----------+ +----------+                    |   |  | |
+|  |  |  | api      | | admin    | | fastapi  | | worker   |  (Deployments)  |   |  | |
+|  |  |  | (Pod)    | | (Pod)    | | (Pod)    | | (Pod)    |                  |   |  | |
+|  |  |  +----+-----+ +----+-----+ +----+-----+ +----+-----+                  |   |  | |
+|  |  |       |           |           |           |                            |   |  | |
+|  |  |       +-----------+-----------+-----------+-------------------------> |   |  | |
+|  |  |                         NLB (DB/Redis/Kafka/ES)                      |   |  | |
+|  |  +----------------------------------------------------------------------+   |  | |
+|  +---------------------------------------------------------------------------+  | |
+|                                                                               | |
+|  Ingress ALB (created by AWS Load Balancer Controller, uses alb_sg)          | |
+|  - Public / Internet-facing                                                  | |
+|  - Routes: / -> api, /admin* -> admin, /fastapi* -> fastapi                  | |
+|  - Security: alb_sg (80/443 from 0.0.0.0/0) -> eks_node_sg (8081,8082,8000)   | |
+|                                                                               | |
++-------------------------------------------------------------------------------+
+
+================================================================================
+  마스터 노드 / 워커 노드 관점
+================================================================================
+
+  EKS는 컨트롤 플레인(마스터)과 데이터 플레인(워커)이 분리되어 있음.
+
+  -----------------------------
+  마스터 (Control Plane) — AWS 관리, 사용자 VPC 밖
+  -----------------------------
+
+      +------------------------------------------+
+      |  EKS Control Plane (AWS 관리)             |
+      |  - API Server, etcd, Scheduler, ...      |
+      |  - 사용자 VPC에 없음 (리전별 AWS 인프라)   |
+      +------------------+-----------------------+
+                         |
+                         | cluster_endpoint (public/private)
+                         v
+  -----------------------------
+  워커 노드 (Data Plane) — 사용자 VPC Private Subnet
+  -----------------------------
+
+      Private Subnets (우리 VPC)
+           |
+           |  두 종류의 워커 노드
+           v
+  +--------+-------------------------------------------------------------------+
+  |        |  (1) System Node Group (Managed)                                  |
+  |        |      - 고정/최소 노드 수 (system_node_desired_size, min_size)     |
+  |        |      - 역할: 시스템 컴포넌트 전용                                  |
+  |        |      - 구동: vpc-cni, coredns, kube-proxy,                        |
+  |        |              AWS Load Balancer Controller, Karpenter Controller    |
+  |        |      - 인스턴스: system_node_instance_types (예: t4g.small)        |
+  +--------+-------------------------------------------------------------------+
+  |        |                                                                   |
+  |        |  (2) Karpenter 프로비저닝 노드 (동적)                              |
+  |        |      - Pending Pod 발생 시에만 생성, 유휴 시 정리                 |
+  |        |      - 역할: 애플리케이션 워크로드                                 |
+  |        |      - 구동: api, admin, fastapi, worker Deployment Pod           |
+  |        |      - NodePool/EC2NodeClass: t4g.small, t4g.medium 등             |
+  |        |      - 동일 eks_node_sg, 동일 IAM (karpenter_node instance profile) |
+  +--------+-------------------------------------------------------------------+
+
+  관계 요약 (단순 흐름):
+
+      kubectl / CI
+            |
+            | HTTPS (eks_cluster_endpoint)
+            v
+      +------------------+
+      | EKS Control      |  (마스터, AWS 관리)
+      | Plane (Master)   |
+      +--------+---------+
+               |
+               | 스케줄링 / 노드 등록
+               v
+      +------------------+     +------------------+
+      | System Node      |     | Karpenter 노드   |
+      | Group (워커)     |     | (워커, 동적)     |
+      | - LB Controller |     | - api Pod        |
+      | - Karpenter      |     | - admin Pod      |
+      | - CoreDNS 등    |     | - fastapi Pod     |
+      +------------------+     | - worker Pod     |
+                               +------------------+
+
+
+================================================================================
+  트래픽 흐름 요약
+================================================================================
+
+  [User] --HTTPS--> [Ingress ALB] --:8081/8082/8000--> [EKS Pods]
+                                                              |
+  [EKS Pods] --3306/6379/9092/9200--> [Internal NLB] --> [MySQL|Redis|Kafka|ES]
+
+  [Operator] --SSH:22--> [Bastion] --SSH/DB ports--> [Data EC2] (db_sg)
+
+  [Private Subnet] --outbound--> [NAT GW] --> [Internet] (ECR, SSM, CloudWatch, ...)
+
+================================================================================
+  보안 그룹 관계
+================================================================================
+
+  alb_sg      : 80, 443 in from 0.0.0.0/0  (Ingress ALB)
+  bastion_sg  : 22 in from 0.0.0.0/0       (Bastion SSH)
+  db_sg       : 3306,6379,9092,9200 in from eks_node_sg + VPC CIDR (NLB health)
+               : 22, 3306, 6379, ... from bastion_sg (Bastion -> DB/Data)
+  eks_node_sg : 8081, 8082, 8000, 443 in from alb_sg / VPC / self
+
+================================================================================
+  주요 출력 (outputs)
+================================================================================
+
+  ingress_alb_dns_name  : Ingress ALB DNS (install_app_manifests=true 시)
+  nlb_dns_name          : 내부 NLB DNS (앱/파드에서 DB/Redis/Kafka/ES 접속)
+  bastion_public_ip     : Bastion 공인 IP (create_bastion=true 시)
+  eks_cluster_endpoint  : EKS API endpoint
+
+================================================================================

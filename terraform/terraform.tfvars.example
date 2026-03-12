@@ -1,0 +1,37 @@
+# ------------------------------------------------------------------------------
+# Custom AMI (Packer 등으로 만든 Docker + MySQL/Redis/Kafka/ES 미리 설치 이미지)
+# 사용 시 이 파일을 terraform.tfvars 로 복사한 뒤 값을 채워 넣으세요.
+# null 이거나 주석 처리하면 Terraform 이 최신 Amazon Linux 2023 ARM64 를 조회해 사용합니다.
+# ------------------------------------------------------------------------------
+
+# 베이스 AMI (DB/Data 공통). 지정 시 MySQL/Redis/Kafka/ES 모두 이 AMI 사용 (개별 override 없을 때)
+# ami_id = null
+# ami_id = "ami-0123456789abcdef0"
+
+# MySQL (개별 지정 시 위 ami_id 보다 우선)
+# mysql_primary_ami_id = "ami-0123456789abcdef0"
+# mysql_replica_ami_id  = "ami-0123456789abcdef0"
+
+# Redis / Kafka / Elasticsearch (개별 지정 시 ami_id 보다 우선)
+# redis_ami_id = "ami-0123456789abcdef0"
+# kafka_ami_id = "ami-0123456789abcdef0"
+# es_ami_id    = "ami-0123456789abcdef0"
+
+# Bastion (선택)
+# bastion_ami_id = "ami-0123456789abcdef0"
+
+# MySQL replica 인스턴스 생성 여부 (true 시 replica 1대 추가)
+# enable_mysql_replica = false
+
+# ------------------------------------------------------------------------------
+# SSM Parameter Store (ssm-parameters.tf)
+# 데이터 계층 EC2 및 애플리케이션에서 참조. null 이면 해당 파라미터 미생성.
+# ------------------------------------------------------------------------------
+# ALB DNS (terraform apply 후 kubectl get ingress -n consultation-prod 로 확인)
+# ssm_alb_dns_name = "k8s-consultat-xxxxx.ap-northeast-2.elb.amazonaws.com"
+
+# 민감 정보 (SecureString) - 데이터 계층 EC2 user_data에서 필수
+# ssm_db_root_password = "your-mysql-root-password"
+# ssm_db_user          = "consultation_user"
+# ssm_db_password      = "your-mysql-app-password"
+# ssm_redis_password   = "your-redis-password"

@@ -1,0 +1,214 @@
+# Deployments for consultation-prod (apply with kubectl)
+# Replace <ECR_REGISTRY> with e.g. 123456789012.dkr.ecr.ap-northeast-2.amazonaws.com
+# before first apply, or use kubectl set image after apply.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: consultation-prod
+  labels:
+    app: api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      serviceAccountName: api-sa
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: api
+          image: 550168168815.dkr.ecr.ap-northeast-2.amazonaws.com/consultation-service/api:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8081
+          args: ["--debug"]
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "prod"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+          startupProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8081
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8081
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8081
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: admin
+  namespace: consultation-prod
+  labels:
+    app: admin
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: admin
+  template:
+    metadata:
+      labels:
+        app: admin
+    spec:
+      serviceAccountName: admin-sa
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: admin
+          image: 550168168815.dkr.ecr.ap-northeast-2.amazonaws.com/consultation-service/admin:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8082
+          args: ["--debug"]
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "prod"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+          startupProbe:
+            httpGet:
+              path: /admin/actuator/health
+              port: 8082
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /admin/actuator/health
+              port: 8082
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /admin/actuator/health
+              port: 8082
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fastapi
+  namespace: consultation-prod
+  labels:
+    app: fastapi
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fastapi
+  template:
+    metadata:
+      labels:
+        app: fastapi
+    spec:
+      serviceAccountName: fastapi-sa
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: fastapi
+          image: 550168168815.dkr.ecr.ap-northeast-2.amazonaws.com/consultation-service/fastapi:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          env:
+            - name: ENVIRONMENT
+              value: "production"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+          livenessProbe:
+            httpGet:
+              path: /fastapi/health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /fastapi/health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: consultation-prod
+  labels:
+    app: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      serviceAccountName: worker-sa
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: worker
+          image: 550168168815.dkr.ecr.ap-northeast-2.amazonaws.com/consultation-service/worker:latest
+          imagePullPolicy: Always
+          args: ["--debug"]
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "prod"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - pgrep -f java
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 3
+---
