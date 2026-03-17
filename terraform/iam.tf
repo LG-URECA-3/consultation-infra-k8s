@@ -74,6 +74,12 @@ resource "aws_iam_role_policy_attachment" "node_cloudwatch_agent" {
   role       = aws_iam_role.node.name
 }
 
+# SSM Session Manager (SSH-less access to nodes; Karpenter + system nodes)
+resource "aws_iam_role_policy_attachment" "node_ssm_managed_instance_core" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+  role       = aws_iam_role.node.name
+}
+
 # ------------------------------------------------------------------------------
 # Karpenter Controller IRSA
 # ------------------------------------------------------------------------------
@@ -197,7 +203,8 @@ resource "aws_iam_role_policy" "karpenter_controller" {
         Action = [
           "ec2:CreateTags",
           "ec2:CreateLaunchTemplate",
-          "ec2:CreateLaunchTemplateVersion"
+          "ec2:CreateLaunchTemplateVersion",
+          "ec2:DeleteLaunchTemplate"
         ]
         Resource = [
           "arn:aws:ec2:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:instance/*",
@@ -221,6 +228,43 @@ resource "aws_iam_role_policy" "karpenter_controller" {
           "eks:DescribeCluster"
         ]
         Resource = "arn:aws:eks:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:cluster/${var.cluster_name}"
+      }
+    ]
+  })
+}
+
+# Additional tagging permissions for Karpenter controller
+resource "aws_iam_role_policy" "karpenter_controller_tagging" {
+  name = "${var.cluster_name}-karpenter-controller-tagging"
+  role = aws_iam_role.karpenter_controller.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:CreateTags",
+          "ec2:RunInstances"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# Allow Karpenter controller to pass the node IAM role to EC2 instances
+resource "aws_iam_role_policy" "karpenter_controller_pass_role" {
+  name = "${var.cluster_name}-karpenter-controller-pass-role"
+  role = aws_iam_role.karpenter_controller.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = "iam:PassRole"
+        Resource = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.cluster_name}-node-role"
       }
     ]
   })

@@ -34,6 +34,12 @@ resource "aws_launch_template" "system_node" {
   name_prefix   = "${var.cluster_name}-system-"
   instance_type = var.system_node_instance_types[0]
 
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 2
+  }
+
   vpc_security_group_ids = [aws_security_group.eks_node.id]
 
   tag_specifications {

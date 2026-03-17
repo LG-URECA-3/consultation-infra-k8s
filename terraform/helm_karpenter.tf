@@ -129,6 +129,7 @@ resource "kubernetes_manifest" "karpenter_ec2_node_class" {
     }
     spec = {
       amiFamily       = "AL2023"
+      # # amiFamily = "AL2"
       amiSelectorTerms = [
         {
           id = "ami-055751883cc1be227"
